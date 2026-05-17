@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>注文書自動計算カメラ</title>
+  <style>
+    body { font-family: sans-serif; margin: 15px; color: #333; background-color: #f5f7fa; }
+    .container { max-width: 480px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+    h1 { font-size: 1.3em; text-align: center; color: #2c3e50; margin-bottom: 25px; }
+    .btn-wrapper { text-align: center; margin-bottom: 25px; }
+    input[type="file"] { display: none; }
+    .btn { background-color: #1abc9c; color: white; padding: 15px 30px; border-radius: 25px; font-size: 1.1em; font-weight: bold; cursor: pointer; display: inline-block; box-shadow: 0 3px 6px rgba(0,0,0,0.1); }
+    #loading { display: none; text-align: center; color: #7f8c8d; margin: 20px 0; font-weight: bold; font-size: 1em; }
+    #result { margin-top: 25px; display: none; }
+    .summary-card { background: #e8f8f5; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 5px solid #1abc9c; }
+    .summary-card p { margin: 6px 0; font-size: 1em; }
+    .summary-card .total-price { font-size: 1.3em; color: #e74c3c; font-weight: bold; margin-top: 10px; border-top: 1px dashed #bdc3c7; padding-top: 10px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.85em; }
+    th, td { border-bottom: 1px solid #e0e0e0; padding: 8px; text-align: left; }
+    th { background-color: #f8f9fa; color: #34495e; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>注文書 自動計算カメラ</h1>
+    
+    <div class="btn-wrapper">
+      <label class="btn" id="upload-label">
+        📷 注文書を撮影する
+        <input type="file" accept="image/*" capture="environment" id="camera" onchange="processImage(this)">
+      </label>
+    </div>
+
+    <div id="loading">⏳ 画像を解析中...<br>(10〜15秒ほどかかります)</div>
+
+    <div id="result">
+      <div class="summary-card">
+        <p><strong>適用ランク:</strong> <span id="res-rank"></span></p>
+        <p><strong>合計点数:</strong> <span id="res-qty"></span> 個</p>
+        <p><strong>小計(税別):</strong> ¥<span id="res-subtotal"></span></p>
+        <p><strong>消費税(8%):</strong> ¥<span id="res-tax"></span></p>
+        <p class="total-price">総合計(税込): ¥<span id="res-total"></span></p>
+      </div>
+      
+      <h3>📋 明細内訳</h3>
+      <table id="item-table">
+        <thead>
+          <tr>
+            <th>商品名</th>
+            <th>数量</th>
+            <th>単価</th>
+            <th>小計</th>
+          </tr>
+        </thead>
+        <tbody id="item-list"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    // ご提示いただいたGASのウェブアプリURLをセットしてあります
+    const GAS_WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwAsiu5k7VZG__QykgG3KKrT3KYdyd8W4H16j6uHiOwdOqEYKLJ9C6b6uGGkFszS-kQ/exec';
+
+    function processImage(input) {
+      if (!input.files || !input.files[0]) return;
+      
+      const file = input.files[0];
+      const reader = new FileReader();
+      
+      // UIのローディング制御
+      document.getElementById('upload-label').style.pointerEvents = 'none';
+      document.getElementById('upload-label').style.opacity = '0.5';
+      document.getElementById('loading').style.display = 'block';
+      document.getElementById('result').style.display = 'none';
+
+      reader.onload = function(e) {
+        const base64Data = e.target.result;
+        
+        // fetchを使ってGASのdoPostへ送信
+        fetch(GAS_WEB_APP_URL, {
+          method: 'POST',
+          mode: 'cors',
+          headers: {
+            'Content-Type': 'text/plain' // CORSエラー回避のためtext/plainで送信
+          },
+          body: JSON.stringify({ image: base64Data })
+        })
+        .then(response => {
+          if (!response.ok) throw new Error('ネットワーク応答が正常ではありません');
+          return response.json();
+        })
+        .then(data => {
+          showResult(data);
+        })
+        .catch(err => {
+          showError(err);
+        });
+      };
+      
+      reader.readAsDataURL(file);
+    }
+
+    function showResult(data) {
+      document.getElementById('upload-label').style.pointerEvents = 'auto';
+      document.getElementById('upload-label').style.opacity = '1';
+      document.getElementById('loading').style.none = 'none';
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('camera').value = ''; 
+
+      if (data.error) {
+        alert('解析エラーが発生しました: ' + data.error);
+        return;
+      }
+
+      document.getElementById('res-rank').innerText = data.rank;
+      document.getElementById('res-qty').innerText = data.total_qty;
+      document.getElementById('res-subtotal').innerText = Number(data.subtotal).toLocaleString();
+      document.getElementById('res-tax').innerText = Number(data.tax).toLocaleString();
+      document.getElementById('res-total').innerText = Number(data.total).toLocaleString();
+
+      const tbody = document.getElementById('item-list');
+      tbody.innerHTML = ''; 
+
+      data.items.forEach(item => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${item.name}</td>
+          <td>${item.qty}</td>
+          <td>¥${Number(item.price).toLocaleString()}</td>
+          <td>¥${Number(item.subtotal).toLocaleString()}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      document.getElementById('result').style.display = 'block';
+    }
+
+    function showError(err) {
+      document.getElementById('upload-label').style.pointerEvents = 'auto';
+      document.getElementById('upload-label').style.opacity = '1';
+      document.getElementById('loading').style.display = 'none';
+      alert('エラーが発生しました: ' + err.message);
+    }
+  </script>
+</body>
+</html>
